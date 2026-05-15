@@ -3,6 +3,8 @@
 //
 
 #pragma once
+#include "Led.h"
+
 
 
 // Cuadro de diálogo de CMaestroDlg
@@ -35,7 +37,7 @@ public:
 	afx_msg void OnBnClickedSalir();
 	CString motor_ip;
 	int motor_port;
-	CStatic motor_led;
+	Led motor_led;
 	CStatic motor_temp;
 	CStatic motor_rpm;
 	CListBox logs;
@@ -43,4 +45,15 @@ public:
 	afx_msg void OnClickedStart();
 	int m_tempValue;
 	int m_rpmValue;
+	CString accionamientos_ip;
+	int accionamientos_port;
+	Led led_izq;
+	Led led_der;
+	Led led_freno;
+	Led accionamientos_led;
+	afx_msg LRESULT OnLogMsg(WPARAM wParam, LPARAM lParam);
+
+	
+
+	void DrawGauges();
 };

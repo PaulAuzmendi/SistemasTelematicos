@@ -269,6 +269,7 @@
     <ClInclude Include="EsclavoMotor.h" />
     <ClInclude Include="EsclavoMotorDlg.h" />
     <ClInclude Include="framework.h" />
+    <ClInclude Include="Modbus.h" />
     <ClInclude Include="MotorSocket.h" />
     <ClInclude Include="pch.h" />
     <ClInclude Include="Resource.h" />
@@ -277,6 +278,7 @@
   <ItemGroup>
     <ClCompile Include="EsclavoMotor.cpp" />
     <ClCompile Include="EsclavoMotorDlg.cpp" />
+    <ClCompile Include="Modbus.cpp" />
     <ClCompile Include="MotorSocket.cpp" />
     <ClCompile Include="pch.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">Create</PrecompiledHeader>

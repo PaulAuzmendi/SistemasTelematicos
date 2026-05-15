@@ -18,8 +18,14 @@
 #define IDC_MOTOR_LED                   1005
 #define IDC_TEMP                        1006
 #define IDC_RPM                         1007
-#define IDC_CHECK1                      1009
+#define IDC_ACCIONAMIENTOS_IP           1008
 #define IDC_START                       1009
+#define IDC_ACCIONAMIENTOS_PORT         1010
+#define IDC_IZQUIERDO                   1011
+#define IDC_DERECHO                     1014
+#define IDC_FRENO                       1015
+#define IDC_MOTOR_LED2                  1016
+#define IDC_ACCIONAMIENTOS_LED          1016
 
 // Next default values for new objects
 // 

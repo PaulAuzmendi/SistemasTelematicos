@@ -267,15 +267,19 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="framework.h" />
+    <ClInclude Include="Led.h" />
     <ClInclude Include="Maestro.h" />
     <ClInclude Include="MaestroDlg.h" />
+    <ClInclude Include="Modbus.h" />
     <ClInclude Include="pch.h" />
     <ClInclude Include="Resource.h" />
     <ClInclude Include="targetver.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="Led.cpp" />
     <ClCompile Include="Maestro.cpp" />
     <ClCompile Include="MaestroDlg.cpp" />
+    <ClCompile Include="Modbus.cpp" />
     <ClCompile Include="pch.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>

@@ -7,6 +7,9 @@
 #include "MaestroDlg.h"
 #include "afxdialogex.h"
 #include <math.h>
+#include "Modbus.h"
+
+#define WM_USER_LOG (WM_USER + 100)
 
 
 #ifdef _DEBUG
@@ -53,6 +56,8 @@ CMaestroDlg::CMaestroDlg(CWnd* pParent /*= nullptr*/)
 	, motor_ip(_T("127.0.0.1"))
 	, motor_port(502)
 	, start(FALSE)
+    , accionamientos_ip(_T("127.0.0.1"))
+    , accionamientos_port(503)
 {
 	m_hIcon = AfxGetApp()->LoadIcon(IDR_MAINFRAME);
 	m_tempValue = 0;
@@ -61,14 +66,20 @@ CMaestroDlg::CMaestroDlg(CWnd* pParent /*= nullptr*/)
 
 void CMaestroDlg::DoDataExchange(CDataExchange* pDX)
 {
-	CDialogEx::DoDataExchange(pDX);
-	DDX_Text(pDX, IDC_MOTO_RIP, motor_ip);
-	DDX_Text(pDX, IDC_MOTOR_PORT, motor_port);
-	DDX_Control(pDX, IDC_MOTOR_LED, motor_led);
-	DDX_Control(pDX, IDC_TEMP, motor_temp);
-	DDX_Control(pDX, IDC_RPM, motor_rpm);
-	DDX_Control(pDX, IDC_LOGS, logs);
-	DDX_Check(pDX, IDC_START, start);
+    CDialogEx::DoDataExchange(pDX);
+    DDX_Text(pDX, IDC_MOTO_RIP, motor_ip);
+    DDX_Text(pDX, IDC_MOTOR_PORT, motor_port);
+    DDX_Control(pDX, IDC_MOTOR_LED, motor_led);
+    DDX_Control(pDX, IDC_TEMP, motor_temp);
+    DDX_Control(pDX, IDC_RPM, motor_rpm);
+    DDX_Control(pDX, IDC_LOGS, logs);
+    DDX_Check(pDX, IDC_START, start);
+    DDX_Text(pDX, IDC_ACCIONAMIENTOS_IP, accionamientos_ip);
+    DDX_Text(pDX, IDC_ACCIONAMIENTOS_PORT, accionamientos_port);
+    DDX_Control(pDX, IDC_IZQUIERDO, led_izq);
+    DDX_Control(pDX, IDC_DERECHO, led_der);
+    DDX_Control(pDX, IDC_FRENO, led_freno);
+    DDX_Control(pDX, IDC_ACCIONAMIENTOS_LED, accionamientos_led);
 }
 
 BEGIN_MESSAGE_MAP(CMaestroDlg, CDialogEx)
@@ -77,6 +88,7 @@ BEGIN_MESSAGE_MAP(CMaestroDlg, CDialogEx)
 	ON_WM_QUERYDRAGICON()
 	ON_BN_CLICKED(IDC_SALIR, &CMaestroDlg::OnBnClickedSalir)
 	ON_BN_CLICKED(IDC_START, &CMaestroDlg::OnClickedStart)
+    ON_MESSAGE(WM_USER_LOG, &CMaestroDlg::OnLogMsg)
 END_MESSAGE_MAP()
 
 
@@ -101,9 +113,19 @@ BOOL CMaestroDlg::OnInitDialog()
 		}
 	}
 
+    if (!AfxSocketInit()) {                      // <-- añade esto
+        AfxMessageBox(_T("Error inicializando sockets"));
+        return FALSE;
+    }
+
 	SetIcon(m_hIcon, TRUE);
 	SetIcon(m_hIcon, FALSE);
 
+    motor_led.SetColor(RGB(0, 200, 0));            // verde
+    accionamientos_led.SetColor(RGB(0, 200, 0));   // verde
+    led_freno.SetColor(RGB(255, 0, 0));            // rojo
+    led_izq.SetColor(RGB(255, 165, 0));            // ámbar
+    led_der.SetColor(RGB(255, 165, 0));            // ámbar
 	UpdateData(FALSE);
 
 	return TRUE;
@@ -156,155 +178,275 @@ void CMaestroDlg::OnBnClickedSalir()
 	CDialog::OnOK();
 }
 
+static void Log(CMaestroDlg* pDlg, const char* msg)
+{
+    COleDateTime now = COleDateTime::GetCurrentTime();
+    CString* line = new CString;
+    line->Format("%s %s",
+        (const char*)now.Format("%H:%M:%S"),
+        msg);
+    pDlg->PostMessage(WM_USER_LOG, 0, (LPARAM)line);
+}
+
+LRESULT CMaestroDlg::OnLogMsg(WPARAM wParam, LPARAM lParam)
+{
+    CString* line = (CString*)lParam;
+    logs.AddString(*line);
+    delete line;
+    return 0;
+}
 
 UINT Motor(LPVOID lp)
 {
-	CMaestroDlg* pDlg = (CMaestroDlg*)lp;
+    CMaestroDlg* pDlg = (CMaestroDlg*)lp;
+    if (!AfxSocketInit()) return 0;
 
-	if (!AfxSocketInit()) {
-		return 0;
-	}
+    CSocket sock;
+    if (!sock.Create()) {
+        Log(pDlg, "Motor: error creando socket");
+        return 0;
+    }
 
-	CSocket sock;
-	if (!sock.Create()) return 0;
-	if (!sock.Connect(pDlg->motor_ip, pDlg->motor_port)) {
-		sock.Close();
-		return 0;
-	}
+    if (!sock.Connect(pDlg->motor_ip, pDlg->motor_port))
+    {
+        sock.Close();
+        pDlg->motor_led.SetMode(Led::OFF);
+        Log(pDlg, "Motor: no responde (reinicia con Stop+Start)");
+        return 0;
+    }
 
-	// ---- Pintar LED en verde (conectado) ----
-	{
-		CDC* pdc = pDlg->motor_led.GetDC();
-		CRect r;
-		pDlg->motor_led.GetClientRect(r);
-		pdc->FillSolidRect(r, RGB(0, 200, 0));
-		pDlg->motor_led.ReleaseDC(pdc);
-	}
+    pDlg->motor_led.SetMode(Led::ON_SOLID);
+    Log(pDlg, "Motor OK..");
 
-	unsigned short trans = 0;
+    unsigned short trans = 0;
+    bool connOk = true;
 
-	while (pDlg->start)
-	{
-		int temp = -1, rpm = -1;
+    while (pDlg->start && connOk)
+    {
+        int temp = -1, rpm = -1;
 
-		// ---- Trama 1: Temperatura (addr 400) ----
-		{
-			trans++;
-			unsigned short addr = 400;
-			unsigned char req[12] = {
-				(unsigned char)(trans >> 8), (unsigned char)(trans & 0xFF),
-				0x00, 0x00, 0x00, 0x06, 0x01, 0x03,
-				(unsigned char)(addr >> 8), (unsigned char)(addr & 0xFF),
-				0x00, 0x01
-			};
-			sock.Send(req, 12);
-			unsigned char resp[20];
-			int len = sock.Receive(resp, sizeof(resp));
-			if (len >= 11) temp = (resp[9] << 8) | resp[10];
-		}
+        // Leer temperatura
+        {
+            Modbus f;
+            f.transactionId = ++trans;
+            f.unitId = 0x01;
+            f.address = 400;
+            f.quantity = 1;
+            unsigned char req[12];
+            int n = f.BuildReadRequest(req);
+            if (sock.Send(req, n) <= 0) connOk = false;
+            else {
+                unsigned char resp[260];
+                int len = sock.Receive(resp, sizeof(resp));
+                if (len <= 0) connOk = false;
+                else if (f.ParseResponse(resp, len)) temp = f.value;
+            }
+        }
+        if (!connOk) break;
 
-		// ---- Trama 2: RPM (addr 401) ----
-		{
-			trans++;
-			unsigned short addr = 401;
-			unsigned char req[12] = {
-				(unsigned char)(trans >> 8), (unsigned char)(trans & 0xFF),
-				0x00, 0x00, 0x00, 0x06, 0x01, 0x03,
-				(unsigned char)(addr >> 8), (unsigned char)(addr & 0xFF),
-				0x00, 0x01
-			};
-			sock.Send(req, 12);
-			unsigned char resp[20];
-			int len = sock.Receive(resp, sizeof(resp));
-			if (len >= 11) rpm = (resp[9] << 8) | resp[10];
-		}
+        // Leer RPM
+        {
+            Modbus f;
+            f.transactionId = ++trans;
+            f.unitId = 0x01;
+            f.address = 401;
+            f.quantity = 1;
+            unsigned char req[12];
+            int n = f.BuildReadRequest(req);
+            if (sock.Send(req, n) <= 0) connOk = false;
+            else {
+                unsigned char resp[260];
+                int len = sock.Receive(resp, sizeof(resp));
+                if (len <= 0) connOk = false;
+                else if (f.ParseResponse(resp, len)) rpm = f.value;
+            }
+        }
+        if (!connOk) break;
 
-		if (temp >= 0) pDlg->m_tempValue = temp;
-		if (rpm >= 0)  pDlg->m_rpmValue = rpm;
-		TRACE(_T("Temp: %d | RPM: %d\n"), temp, rpm);
+        if (temp >= 0) pDlg->m_tempValue = temp;
+        if (rpm >= 0) pDlg->m_rpmValue = rpm;
 
-		// ---- Dibujar Gauge Temperatura (0..300) ----
-		{
-			CDC* pdc = pDlg->motor_temp.GetDC();
-			CRect r;
-			pDlg->motor_temp.GetClientRect(r);
-			pdc->FillSolidRect(r, RGB(255, 255, 255));
+        // ---- Gauge Temperatura ----
+        {
+            CDC* pdc = pDlg->motor_temp.GetDC();
+            CRect r; pDlg->motor_temp.GetClientRect(r);
+            pdc->FillSolidRect(r, RGB(255, 255, 255));
 
-			int cx = r.Width() / 2;
-			int cy = r.bottom - 5;
-			int radio = min(r.Width() / 2 - 5, r.Height() - 10);
+            int cx = r.Width() / 2;
+            int cy = r.bottom - 5;
+            int radio = min(r.Width() / 2 - 5, r.Height() - 10);
 
-			CPen blackPen(PS_SOLID, 1, RGB(0, 0, 0));
-			CPen* oldPen = pdc->SelectObject(&blackPen);
-			pdc->Arc(cx - radio, cy - radio, cx + radio, cy + radio,
-				cx + radio, cy, cx - radio, cy);
+            CPen blackPen(PS_SOLID, 1, RGB(0, 0, 0));
+            CPen* oldPen = pdc->SelectObject(&blackPen);
+            pdc->Arc(cx - radio, cy - radio, cx + radio, cy + radio,
+                cx + radio, cy, cx - radio, cy);
 
-			double angle = 3.14159265 * (1.0 - (double)pDlg->m_tempValue / 300.0);
-			int xe = cx + (int)(radio * cos(angle));
-			int ye = cy - (int)(radio * sin(angle));
+            double angle = 3.14159265 * (1.0 - (double)pDlg->m_tempValue / 300.0);
+            int xe = cx + (int)(radio * cos(angle));
+            int ye = cy - (int)(radio * sin(angle));
 
-			CPen redPen(PS_SOLID, 2, RGB(255, 0, 0));
-			pdc->SelectObject(&redPen);
-			pdc->MoveTo(cx, cy);
-			pdc->LineTo(xe, ye);
+            CPen redPen(PS_SOLID, 2, RGB(255, 0, 0));
+            pdc->SelectObject(&redPen);
+            pdc->MoveTo(cx, cy); pdc->LineTo(xe, ye);
+            pdc->SelectObject(oldPen);
+            pDlg->motor_temp.ReleaseDC(pdc);
+        }
 
-			pdc->SelectObject(oldPen);
-			pDlg->motor_temp.ReleaseDC(pdc);
-		}
+        // ---- Gauge RPM ----
+        {
+            CDC* pdc = pDlg->motor_rpm.GetDC();
+            CRect r; pDlg->motor_rpm.GetClientRect(r);
+            pdc->FillSolidRect(r, RGB(255, 255, 255));
 
-		// ---- Dibujar Gauge RPM (0..7000) ----
-		{
-			CDC* pdc = pDlg->motor_rpm.GetDC();
-			CRect r;
-			pDlg->motor_rpm.GetClientRect(r);
-			pdc->FillSolidRect(r, RGB(255, 255, 255));
+            int cx = r.Width() / 2;
+            int cy = r.bottom - 5;
+            int radio = min(r.Width() / 2 - 5, r.Height() - 10);
 
-			int cx = r.Width() / 2;
-			int cy = r.bottom - 5;
-			int radio = min(r.Width() / 2 - 5, r.Height() - 10);
+            CPen blackPen(PS_SOLID, 1, RGB(0, 0, 0));
+            CPen* oldPen = pdc->SelectObject(&blackPen);
+            pdc->Arc(cx - radio, cy - radio, cx + radio, cy + radio,
+                cx + radio, cy, cx - radio, cy);
 
-			CPen blackPen(PS_SOLID, 1, RGB(0, 0, 0));
-			CPen* oldPen = pdc->SelectObject(&blackPen);
-			pdc->Arc(cx - radio, cy - radio, cx + radio, cy + radio,
-				cx + radio, cy, cx - radio, cy);
+            double angle = 3.14159265 * (1.0 - (double)pDlg->m_rpmValue / 7000.0);
+            int xe = cx + (int)(radio * cos(angle));
+            int ye = cy - (int)(radio * sin(angle));
 
-			double angle = 3.14159265 * (1.0 - (double)pDlg->m_rpmValue / 7000.0);
-			int xe = cx + (int)(radio * cos(angle));
-			int ye = cy - (int)(radio * sin(angle));
+            CPen redPen(PS_SOLID, 2, RGB(255, 0, 0));
+            pdc->SelectObject(&redPen);
+            pdc->MoveTo(cx, cy); pdc->LineTo(xe, ye);
+            pdc->SelectObject(oldPen);
+            pDlg->motor_rpm.ReleaseDC(pdc);
+        }
 
-			CPen redPen(PS_SOLID, 2, RGB(255, 0, 0));
-			pdc->SelectObject(&redPen);
-			pdc->MoveTo(cx, cy);
-			pdc->LineTo(xe, ye);
+        Sleep(250);
+    }
 
-			pdc->SelectObject(oldPen);
-			pDlg->motor_rpm.ReleaseDC(pdc);
-		}
+    sock.Close();
+    pDlg->motor_led.SetMode(Led::OFF);
 
-		Sleep(250);
-	}
+    if (!connOk && pDlg->start) {
+        // Salimos por error de socket, no porque el usuario parara
+        Log(pDlg, "Motor: conexion perdida (reinicia con Stop+Start)");
+    }
 
-	sock.Close();
-
-	// ---- Pintar LED en gris (desconectado) ----
-	{
-		CDC* pdc = pDlg->motor_led.GetDC();
-		CRect r;
-		pDlg->motor_led.GetClientRect(r);
-		pdc->FillSolidRect(r, RGB(192, 192, 192));
-		pDlg->motor_led.ReleaseDC(pdc);
-	}
-
-	return 0;
+    return 0;
 }
+UINT Accionamientos(LPVOID lp)
+{
+    CMaestroDlg* pDlg = (CMaestroDlg*)lp;
+    if (!AfxSocketInit()) return 0;
 
+    CSocket sock;
+    if (!sock.Create()) {
+        Log(pDlg, "Accionamientos: error creando socket");
+        return 0;
+    }
 
+    if (!sock.Connect(pDlg->accionamientos_ip, pDlg->accionamientos_port))
+    {
+        sock.Close();
+        pDlg->accionamientos_led.SetMode(Led::OFF);
+        Log(pDlg, "Accionamientos: no responde (reinicia con Stop+Start)");
+        return 0;
+    }
+
+    pDlg->accionamientos_led.SetMode(Led::ON_SOLID);
+    Log(pDlg, "Accionamientos OK..");
+
+    unsigned short trans = 0;
+    bool connOk = true;
+
+    while (pDlg->start && connOk)
+    {
+        int freno = -1, izq = -1, der = -1;
+
+        // Freno
+        {
+            Modbus f;
+            f.transactionId = ++trans;
+            f.unitId = 0x01;
+            f.address = 400;
+            f.quantity = 1;
+            unsigned char req[12];
+            int n = f.BuildReadRequest(req);
+            if (sock.Send(req, n) <= 0) connOk = false;
+            else {
+                unsigned char resp[260];
+                int len = sock.Receive(resp, sizeof(resp));
+                if (len <= 0) connOk = false;
+                else if (f.ParseResponse(resp, len)) freno = f.value;
+            }
+        }
+        if (!connOk) break;
+
+        // Izq
+        {
+            Modbus f;
+            f.transactionId = ++trans;
+            f.unitId = 0x01;
+            f.address = 401;
+            f.quantity = 1;
+            unsigned char req[12];
+            int n = f.BuildReadRequest(req);
+            if (sock.Send(req, n) <= 0) connOk = false;
+            else {
+                unsigned char resp[260];
+                int len = sock.Receive(resp, sizeof(resp));
+                if (len <= 0) connOk = false;
+                else if (f.ParseResponse(resp, len)) izq = f.value;
+            }
+        }
+        if (!connOk) break;
+
+        // Der
+        {
+            Modbus f;
+            f.transactionId = ++trans;
+            f.unitId = 0x01;
+            f.address = 402;
+            f.quantity = 1;
+            unsigned char req[12];
+            int n = f.BuildReadRequest(req);
+            if (sock.Send(req, n) <= 0) connOk = false;
+            else {
+                unsigned char resp[260];
+                int len = sock.Receive(resp, sizeof(resp));
+                if (len <= 0) connOk = false;
+                else if (f.ParseResponse(resp, len)) der = f.value;
+            }
+        }
+        if (!connOk) break;
+
+        pDlg->led_freno.SetMode(freno == 1 ? Led::ON_SOLID : Led::OFF);
+        pDlg->led_izq.SetMode(izq == 1 ? Led::ON_BLINKING : Led::OFF);
+        pDlg->led_der.SetMode(der == 1 ? Led::ON_BLINKING : Led::OFF);
+
+        Sleep(250);
+    }
+
+    sock.Close();
+    pDlg->accionamientos_led.SetMode(Led::OFF);
+    pDlg->led_freno.SetMode(Led::OFF);
+    pDlg->led_izq.SetMode(Led::OFF);
+    pDlg->led_der.SetMode(Led::OFF);
+
+    if (!connOk && pDlg->start) {
+        Log(pDlg, "Accionamientos: conexion perdida (reinicia con Stop+Start)");
+    }
+
+    return 0;
+}
 void CMaestroDlg::OnClickedStart()
 {
-	UpdateData(TRUE);
+    UpdateData(TRUE);
 
-	if (start)
-	{
-		AfxBeginThread(Motor, this);
-	}
+    if (start) {
+        Log(this, "Start Polling..");
+        AfxBeginThread(Motor, this);
+        Sleep(50);                              // <-- evita arranque simultáneo
+        AfxBeginThread(Accionamientos, this);
+    }
+    else {
+        Log(this, "Stop Polling..");
+    }
 }
