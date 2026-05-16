@@ -53,7 +53,7 @@ END_MESSAGE_MAP()
 
 CEsclavoMotorDlg::CEsclavoMotorDlg(CWnd* pParent /*= nullptr*/)
 	: CDialogEx(IDD_ESCLAVOMOTOR_DIALOG, pParent)
-	, m_port(0)
+	, m_port(3502)
 	, m_temp(0)
 	, m_rpm(0)
 {

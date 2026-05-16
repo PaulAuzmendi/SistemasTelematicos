@@ -52,8 +52,12 @@ public:
 	Led led_freno;
 	Led accionamientos_led;
 	afx_msg LRESULT OnLogMsg(WPARAM wParam, LPARAM lParam);
-
-	
-
-	void DrawGauges();
+	afx_msg void OnTimer(UINT_PTR nIDEvent);
+	CString luces_ip;
+	int luces_port;
+	Led luces_led;
+	int m_frenoState;
+	int m_izqState;
+	int m_derState;
+	int m_tiempo;
 };

@@ -22,10 +22,15 @@
 #define IDC_START                       1009
 #define IDC_ACCIONAMIENTOS_PORT         1010
 #define IDC_IZQUIERDO                   1011
+#define IDC_LUCES_IP                    1012
+#define IDC_LUCES_PORT                  1013
 #define IDC_DERECHO                     1014
 #define IDC_FRENO                       1015
 #define IDC_MOTOR_LED2                  1016
 #define IDC_ACCIONAMIENTOS_LED          1016
+#define IDC_LUCES_LED                   1017
+#define IDC_LUCES_IP2                   1018
+#define IDC_POLLING                     1018
 
 // Next default values for new objects
 // 

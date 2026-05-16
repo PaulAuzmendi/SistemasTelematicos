@@ -54,10 +54,16 @@ END_MESSAGE_MAP()
 CMaestroDlg::CMaestroDlg(CWnd* pParent /*= nullptr*/)
 	: CDialogEx(IDD_MAESTRO_DIALOG, pParent)
 	, motor_ip(_T("127.0.0.1"))
-	, motor_port(502)
+	, motor_port(3502)
 	, start(FALSE)
     , accionamientos_ip(_T("127.0.0.1"))
-    , accionamientos_port(503)
+    , accionamientos_port(3503)
+    , luces_ip(_T("127.0.0.1"))
+    , luces_port(3504)
+    , m_frenoState(0)
+    , m_izqState(0)
+    , m_derState(0)
+    , m_tiempo(250)
 {
 	m_hIcon = AfxGetApp()->LoadIcon(IDR_MAINFRAME);
 	m_tempValue = 0;
@@ -80,6 +86,10 @@ void CMaestroDlg::DoDataExchange(CDataExchange* pDX)
     DDX_Control(pDX, IDC_DERECHO, led_der);
     DDX_Control(pDX, IDC_FRENO, led_freno);
     DDX_Control(pDX, IDC_ACCIONAMIENTOS_LED, accionamientos_led);
+    DDX_Text(pDX, IDC_LUCES_IP, luces_ip);
+    DDX_Text(pDX, IDC_LUCES_PORT, luces_port);
+    DDX_Control(pDX, IDC_LUCES_LED, luces_led);
+    DDX_Text(pDX, IDC_POLLING, m_tiempo);
 }
 
 BEGIN_MESSAGE_MAP(CMaestroDlg, CDialogEx)
@@ -89,6 +99,7 @@ BEGIN_MESSAGE_MAP(CMaestroDlg, CDialogEx)
 	ON_BN_CLICKED(IDC_SALIR, &CMaestroDlg::OnBnClickedSalir)
 	ON_BN_CLICKED(IDC_START, &CMaestroDlg::OnClickedStart)
     ON_MESSAGE(WM_USER_LOG, &CMaestroDlg::OnLogMsg)
+    ON_WM_TIMER()
 END_MESSAGE_MAP()
 
 
@@ -123,9 +134,11 @@ BOOL CMaestroDlg::OnInitDialog()
 
     motor_led.SetColor(RGB(0, 200, 0));            // verde
     accionamientos_led.SetColor(RGB(0, 200, 0));   // verde
+    luces_led.SetColor(RGB(0, 200, 0));   // verde "conectado"
     led_freno.SetColor(RGB(255, 0, 0));            // rojo
     led_izq.SetColor(RGB(255, 165, 0));            // ámbar
     led_der.SetColor(RGB(255, 165, 0));            // ámbar
+    SetTimer(1, 400, NULL);
 	UpdateData(FALSE);
 
 	return TRUE;
@@ -318,7 +331,7 @@ UINT Motor(LPVOID lp)
             pDlg->motor_rpm.ReleaseDC(pdc);
         }
 
-        Sleep(250);
+        Sleep(pDlg->m_tiempo);
     }
 
     sock.Close();
@@ -341,9 +354,7 @@ UINT Accionamientos(LPVOID lp)
         Log(pDlg, "Accionamientos: error creando socket");
         return 0;
     }
-
-    if (!sock.Connect(pDlg->accionamientos_ip, pDlg->accionamientos_port))
-    {
+    if (!sock.Connect(pDlg->accionamientos_ip, pDlg->accionamientos_port)) {
         sock.Close();
         pDlg->accionamientos_led.SetMode(Led::OFF);
         Log(pDlg, "Accionamientos: no responde (reinicia con Stop+Start)");
@@ -359,69 +370,36 @@ UINT Accionamientos(LPVOID lp)
     while (pDlg->start && connOk)
     {
         int freno = -1, izq = -1, der = -1;
+        unsigned short addrs[3] = { 400, 401, 402 };
+        int* outs[3] = { &freno, &izq, &der };
 
-        // Freno
-        {
+        for (int k = 0; k < 3 && connOk; k++) {
             Modbus f;
             f.transactionId = ++trans;
             f.unitId = 0x01;
-            f.address = 400;
+            f.address = addrs[k];
             f.quantity = 1;
             unsigned char req[12];
             int n = f.BuildReadRequest(req);
-            if (sock.Send(req, n) <= 0) connOk = false;
-            else {
-                unsigned char resp[260];
-                int len = sock.Receive(resp, sizeof(resp));
-                if (len <= 0) connOk = false;
-                else if (f.ParseResponse(resp, len)) freno = f.value;
-            }
+            if (sock.Send(req, n) <= 0) { connOk = false; break; }
+            unsigned char resp[260];
+            int len = sock.Receive(resp, sizeof(resp));
+            if (len <= 0) { connOk = false; break; }
+            if (f.ParseResponse(resp, len)) *outs[k] = f.value;
         }
         if (!connOk) break;
 
-        // Izq
-        {
-            Modbus f;
-            f.transactionId = ++trans;
-            f.unitId = 0x01;
-            f.address = 401;
-            f.quantity = 1;
-            unsigned char req[12];
-            int n = f.BuildReadRequest(req);
-            if (sock.Send(req, n) <= 0) connOk = false;
-            else {
-                unsigned char resp[260];
-                int len = sock.Receive(resp, sizeof(resp));
-                if (len <= 0) connOk = false;
-                else if (f.ParseResponse(resp, len)) izq = f.value;
-            }
-        }
-        if (!connOk) break;
+        // Publicar estado para que el hilo Luces lo lea
+        pDlg->m_frenoState = (freno == 1) ? 1 : 0;
+        pDlg->m_izqState = (izq == 1) ? 1 : 0;
+        pDlg->m_derState = (der == 1) ? 1 : 0;
 
-        // Der
-        {
-            Modbus f;
-            f.transactionId = ++trans;
-            f.unitId = 0x01;
-            f.address = 402;
-            f.quantity = 1;
-            unsigned char req[12];
-            int n = f.BuildReadRequest(req);
-            if (sock.Send(req, n) <= 0) connOk = false;
-            else {
-                unsigned char resp[260];
-                int len = sock.Receive(resp, sizeof(resp));
-                if (len <= 0) connOk = false;
-                else if (f.ParseResponse(resp, len)) der = f.value;
-            }
-        }
-        if (!connOk) break;
-
+        // LEDs locales
         pDlg->led_freno.SetMode(freno == 1 ? Led::ON_SOLID : Led::OFF);
         pDlg->led_izq.SetMode(izq == 1 ? Led::ON_BLINKING : Led::OFF);
         pDlg->led_der.SetMode(der == 1 ? Led::ON_BLINKING : Led::OFF);
 
-        Sleep(250);
+        Sleep(pDlg->m_tiempo);
     }
 
     sock.Close();
@@ -430,10 +408,80 @@ UINT Accionamientos(LPVOID lp)
     pDlg->led_izq.SetMode(Led::OFF);
     pDlg->led_der.SetMode(Led::OFF);
 
+    // Reset para que Luces no se quede escribiendo valores stale
+    pDlg->m_frenoState = 0;
+    pDlg->m_izqState = 0;
+    pDlg->m_derState = 0;
+
     if (!connOk && pDlg->start) {
         Log(pDlg, "Accionamientos: conexion perdida (reinicia con Stop+Start)");
     }
+    return 0;
+}
+UINT Luces(LPVOID lp)
+{
+    CMaestroDlg* pDlg = (CMaestroDlg*)lp;
+    if (!AfxSocketInit()) return 0;
 
+    CSocket sock;
+    if (!sock.Create()) {
+        Log(pDlg, "Luces: error creando socket");
+        return 0;
+    }
+    if (!sock.Connect(pDlg->luces_ip, pDlg->luces_port)) {
+        sock.Close();
+        pDlg->luces_led.SetMode(Led::OFF);
+        Log(pDlg, "Luces: no responde (reinicia con Stop+Start)");
+        return 0;
+    }
+
+    pDlg->luces_led.SetMode(Led::ON_SOLID);
+    Log(pDlg, "Luces OK..");
+
+    unsigned short trans = 0;
+    bool connOk = true;
+
+    while (pDlg->start && connOk)
+    {
+        // Snapshot del estado en este ciclo
+        int frenoS = pDlg->m_frenoState;
+        int izqS = pDlg->m_izqState;
+        int derS = pDlg->m_derState;
+
+        unsigned short addrs[5] = { 500, 501, 502, 503, 504 };
+        unsigned short vals[5] = {
+            (unsigned short)frenoS,
+            (unsigned short)izqS,
+            (unsigned short)derS,
+            (unsigned short)izqS,
+            (unsigned short)derS
+        };
+
+        for (int k = 0; k < 5 && connOk; k++) {
+            Modbus f;
+            f.transactionId = ++trans;
+            f.unitId = 0x01;
+            f.address = addrs[k];
+            f.value = vals[k];
+            unsigned char req[12];
+            int n = f.BuildWriteRequest(req);
+            if (sock.Send(req, n) <= 0) { connOk = false; break; }
+            unsigned char resp[260];
+            int len = sock.Receive(resp, sizeof(resp));
+            if (len <= 0) { connOk = false; break; }
+            f.ParseResponse(resp, len);   // eco
+        }
+        if (!connOk) break;
+
+        Sleep(pDlg->m_tiempo);
+    }
+
+    sock.Close();
+    pDlg->luces_led.SetMode(Led::OFF);
+
+    if (!connOk && pDlg->start) {
+        Log(pDlg, "Luces: conexion perdida (reinicia con Stop+Start)");
+    }
     return 0;
 }
 void CMaestroDlg::OnClickedStart()
@@ -443,10 +491,21 @@ void CMaestroDlg::OnClickedStart()
     if (start) {
         Log(this, "Start Polling..");
         AfxBeginThread(Motor, this);
-        Sleep(50);                              // <-- evita arranque simultáneo
+        Sleep(50);
         AfxBeginThread(Accionamientos, this);
+        Sleep(50);
+        AfxBeginThread(Luces, this);
     }
     else {
         Log(this, "Stop Polling..");
     }
+}
+
+void CMaestroDlg::OnTimer(UINT_PTR nIDEvent)
+{
+    if (nIDEvent == 1) {
+        led_izq.Tick();
+        led_der.Tick();
+    }
+    CDialogEx::OnTimer(nIDEvent);
 }
