@@ -266,6 +266,7 @@
     </ResourceCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="CWebSocket.h" />
     <ClInclude Include="framework.h" />
     <ClInclude Include="Led.h" />
     <ClInclude Include="Maestro.h" />
@@ -276,6 +277,7 @@
     <ClInclude Include="targetver.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="CWebSocket.cpp" />
     <ClCompile Include="Led.cpp" />
     <ClCompile Include="Maestro.cpp" />
     <ClCompile Include="MaestroDlg.cpp" />

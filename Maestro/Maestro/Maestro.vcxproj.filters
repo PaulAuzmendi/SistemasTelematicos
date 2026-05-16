@@ -39,6 +39,9 @@
     <ClInclude Include="Led.h">
       <Filter>Archivos de encabezado</Filter>
     </ClInclude>
+    <ClInclude Include="CWebSocket.h">
+      <Filter>Archivos de encabezado</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Maestro.cpp">
@@ -54,6 +57,9 @@
       <Filter>Archivos de origen</Filter>
     </ClCompile>
     <ClCompile Include="Led.cpp">
+      <Filter>Archivos de origen</Filter>
+    </ClCompile>
+    <ClCompile Include="CWebSocket.cpp">
       <Filter>Archivos de origen</Filter>
     </ClCompile>
   </ItemGroup>

@@ -4,6 +4,8 @@
 
 #pragma once
 #include "Led.h"
+#include "CWebSocket.h"
+
 
 
 
@@ -60,4 +62,9 @@ public:
 	int m_izqState;
 	int m_derState;
 	int m_tiempo;
+	CWebSocket s_listen;          
+	void OnWebAccept();           
+	BOOL m_motorConn;
+	BOOL m_accConn;
+	BOOL m_lucesConn;
 };

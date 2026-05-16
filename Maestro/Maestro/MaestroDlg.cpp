@@ -64,6 +64,9 @@ CMaestroDlg::CMaestroDlg(CWnd* pParent /*= nullptr*/)
     , m_izqState(0)
     , m_derState(0)
     , m_tiempo(250)
+    , m_motorConn(FALSE)
+    , m_accConn(FALSE)
+    , m_lucesConn(FALSE)
 {
 	m_hIcon = AfxGetApp()->LoadIcon(IDR_MAINFRAME);
 	m_tempValue = 0;
@@ -229,6 +232,7 @@ UINT Motor(LPVOID lp)
     }
 
     pDlg->motor_led.SetMode(Led::ON_SOLID);
+    pDlg->m_motorConn = TRUE;
     Log(pDlg, "Motor OK..");
 
     unsigned short trans = 0;
@@ -336,6 +340,8 @@ UINT Motor(LPVOID lp)
 
     sock.Close();
     pDlg->motor_led.SetMode(Led::OFF);
+    pDlg->m_motorConn = FALSE;
+
 
     if (!connOk && pDlg->start) {
         // Salimos por error de socket, no porque el usuario parara
@@ -362,6 +368,7 @@ UINT Accionamientos(LPVOID lp)
     }
 
     pDlg->accionamientos_led.SetMode(Led::ON_SOLID);
+    pDlg->m_accConn = TRUE;
     Log(pDlg, "Accionamientos OK..");
 
     unsigned short trans = 0;
@@ -404,6 +411,8 @@ UINT Accionamientos(LPVOID lp)
 
     sock.Close();
     pDlg->accionamientos_led.SetMode(Led::OFF);
+    pDlg->m_accConn = FALSE;
+
     pDlg->led_freno.SetMode(Led::OFF);
     pDlg->led_izq.SetMode(Led::OFF);
     pDlg->led_der.SetMode(Led::OFF);
@@ -436,6 +445,7 @@ UINT Luces(LPVOID lp)
     }
 
     pDlg->luces_led.SetMode(Led::ON_SOLID);
+    pDlg->m_lucesConn = TRUE;
     Log(pDlg, "Luces OK..");
 
     unsigned short trans = 0;
@@ -478,6 +488,8 @@ UINT Luces(LPVOID lp)
 
     sock.Close();
     pDlg->luces_led.SetMode(Led::OFF);
+    pDlg->m_lucesConn = FALSE;
+
 
     if (!connOk && pDlg->start) {
         Log(pDlg, "Luces: conexion perdida (reinicia con Stop+Start)");
@@ -495,9 +507,18 @@ void CMaestroDlg::OnClickedStart()
         AfxBeginThread(Accionamientos, this);
         Sleep(50);
         AfxBeginThread(Luces, this);
+
+        if (s_listen.Create(8080, SOCK_STREAM) && s_listen.Listen()) {
+            Log(this, "WebServer running on port 8080");
+        }
+        else {
+            Log(this, "WebServer: error al iniciar en 8080");
+            s_listen.Close();
+        }
     }
     else {
         Log(this, "Stop Polling..");
+        s_listen.Close();
     }
 }
 
@@ -508,4 +529,270 @@ void CMaestroDlg::OnTimer(UINT_PTR nIDEvent)
         led_der.Tick();
     }
     CDialogEx::OnTimer(nIDEvent);
+}
+
+static CStringA getMainPage()
+{
+    return R"HTML(<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Centralita</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+    background: #0f0f10;
+    color: #e6e6e6;
+    margin: 0;
+    padding: 24px;
+  }
+  .container {
+    max-width: 720px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+  .card {
+    background: #1a1a1c;
+    border: 1px solid #2a2a2d;
+    border-radius: 16px;
+    padding: 24px;
+  }
+  .card h2 {
+    margin: 0 0 8px 0;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: #707075;
+  }
+  .number {
+    font-family: "SF Mono", Consolas, Menlo, monospace;
+    font-size: 64px;
+    font-weight: 200;
+    color: #fff;
+    letter-spacing: -2px;
+    line-height: 1.1;
+  }
+  .number .unit {
+    font-size: 16px;
+    color: #707075;
+    margin-left: 8px;
+    font-weight: 400;
+    letter-spacing: 0;
+  }
+  .full { grid-column: span 2; }
+  .car-wrap { display: flex; justify-content: center; padding: 8px 0; }
+
+  .status-row {
+    display: flex;
+    justify-content: space-around;
+    font-size: 13px;
+    color: #aaa;
+  }
+  .dot {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #3a3a3d;
+    margin-right: 8px;
+    vertical-align: middle;
+  }
+  .dot.on {
+    background: #4ade80;
+    box-shadow: 0 0 8px rgba(74, 222, 128, 0.6);
+  }
+
+  /* Car SVG */
+  .body-shape { fill: #2d2d30; stroke: #3a3a3d; stroke-width: 1; }
+  .window    { fill: #15151a; }
+  .wheel     { fill: #0a0a0a; }
+  .headlight { fill: #f5f5dc; opacity: 0.85; }
+  .signal    { fill: #3a3a3d; transition: fill 0.1s; }
+  .brake     { fill: #3a3a3d; transition: fill 0.1s; }
+
+  .signal.on {
+    fill: #ff9500;
+    animation: blink 0.8s steps(1) infinite;
+    filter: drop-shadow(0 0 6px rgba(255, 149, 0, 0.7));
+  }
+  .brake.on {
+    fill: #ef4444;
+    filter: drop-shadow(0 0 8px rgba(239, 68, 68, 0.8));
+  }
+  @keyframes blink {
+    0%, 49%   { opacity: 1; }
+    50%, 100% { opacity: 0.15; }
+  }
+</style>
+</head>
+<body>
+  <div class="container">
+    <div class="card">
+      <h2>RPM</h2>
+      <div class="number"><span id="rpm">--</span><span class="unit">rpm</span></div>
+    </div>
+    <div class="card">
+      <h2>Temperatura</h2>
+      <div class="number"><span id="temp">--</span><span class="unit">&deg;C</span></div>
+    </div>
+
+    <div class="card full">
+      <h2>Vehiculo</h2>
+      <div class="car-wrap">
+        <svg viewBox="0 0 200 400" width="180" height="360" xmlns="http://www.w3.org/2000/svg">
+          <!-- car body -->
+          <rect class="body-shape" x="20" y="20" width="160" height="360" rx="32" ry="32"/>
+
+          <!-- windshield (front) -->
+          <path class="window" d="M 38 62 L 162 62 L 152 112 L 48 112 Z"/>
+          <!-- rear window -->
+          <path class="window" d="M 48 290 L 152 290 L 162 340 L 38 340 Z"/>
+
+          <!-- wheels (4 corners, on the sides) -->
+          <rect class="wheel" x="10" y="70"  width="14" height="50" rx="3"/>
+          <rect class="wheel" x="176" y="70"  width="14" height="50" rx="3"/>
+          <rect class="wheel" x="10" y="282" width="14" height="50" rx="3"/>
+          <rect class="wheel" x="176" y="282" width="14" height="50" rx="3"/>
+
+          <!-- front headlights -->
+          <rect class="headlight" x="60" y="26" width="35" height="10" rx="3"/>
+          <rect class="headlight" x="105" y="26" width="35" height="10" rx="3"/>
+
+          <!-- front turn signals -->
+          <rect class="signal" id="sig-fl" x="26" y="26" width="28" height="10" rx="3"/>
+          <rect class="signal" id="sig-fr" x="146" y="26" width="28" height="10" rx="3"/>
+
+          <!-- rear brake lights -->
+          <rect class="brake" id="brake-l" x="58" y="365" width="38" height="10" rx="3"/>
+          <rect class="brake" id="brake-r" x="104" y="365" width="38" height="10" rx="3"/>
+
+          <!-- rear turn signals -->
+          <rect class="signal" id="sig-rl" x="26" y="365" width="28" height="10" rx="3"/>
+          <rect class="signal" id="sig-rr" x="146" y="365" width="28" height="10" rx="3"/>
+        </svg>
+      </div>
+    </div>
+
+    <div class="card full">
+      <div class="status-row">
+        <div><span class="dot" id="dot-motor"></span>Motor</div>
+        <div><span class="dot" id="dot-acc"></span>Accionamientos</div>
+        <div><span class="dot" id="dot-luces"></span>Luces</div>
+      </div>
+    </div>
+  </div>
+
+<script>
+async function update() {
+  try {
+    const r = await fetch('/data');
+    if (!r.ok) return;
+    const d = await r.json();
+
+    if (d.motor) {
+      document.getElementById('rpm').textContent  = (d.motor.rpm  ?? '--');
+      document.getElementById('temp').textContent = (d.motor.temp ?? '--');
+      document.getElementById('dot-motor').classList.toggle('on', !!d.motor.connected);
+    }
+    if (d.acc) {
+      const izq = d.acc.izq === 1, der = d.acc.der === 1, fre = d.acc.freno === 1;
+      document.getElementById('sig-fl').classList.toggle('on', izq);
+      document.getElementById('sig-rl').classList.toggle('on', izq);
+      document.getElementById('sig-fr').classList.toggle('on', der);
+      document.getElementById('sig-rr').classList.toggle('on', der);
+      document.getElementById('brake-l').classList.toggle('on', fre);
+      document.getElementById('brake-r').classList.toggle('on', fre);
+      document.getElementById('dot-acc').classList.toggle('on', !!d.acc.connected);
+    }
+    if (d.luces) {
+      document.getElementById('dot-luces').classList.toggle('on', !!d.luces.connected);
+    }
+  } catch (e) {}
+}
+setInterval(update, 300);
+update();
+</script>
+</body>
+</html>)HTML";
+}
+static CStringA getDataJSON(CMaestroDlg* pDlg)
+{
+    CStringA json;
+    json.Format(
+        "{"
+        "\"motor\":{\"connected\":%s,\"temp\":%d,\"rpm\":%d},"
+        "\"acc\":{\"connected\":%s,\"freno\":%d,\"izq\":%d,\"der\":%d},"
+        "\"luces\":{\"connected\":%s}"
+        "}",
+        pDlg->m_motorConn ? "true" : "false",
+        pDlg->m_tempValue,
+        pDlg->m_rpmValue,
+        pDlg->m_accConn ? "true" : "false",
+        pDlg->m_frenoState,
+        pDlg->m_izqState,
+        pDlg->m_derState,
+        pDlg->m_lucesConn ? "true" : "false"
+    );
+    return json;
+}
+
+void CMaestroDlg::OnWebAccept()
+{
+    CWebSocket s_cliente;
+    if (!s_listen.Accept(s_cliente)) return;
+
+    char bufweb[10240];
+    int len = s_cliente.Receive(bufweb, sizeof(bufweb) - 1);
+    if (len <= 0) { s_cliente.Close(); return; }
+    bufweb[len] = 0;
+
+    // --- Extraer el path de la linea "GET /path HTTP/1.1" ---
+    CStringA req(bufweb);
+    CStringA path = "/";
+    int posGet = req.Find("GET ");
+    if (posGet != -1) {
+        int posHttp = req.Find(" HTTP", posGet);
+        if (posHttp != -1) {
+            path = req.Mid(posGet + 4, posHttp - (posGet + 4));
+        }
+    }
+
+    CString logLine;
+    logLine.Format("Web GET %s", (LPCSTR)path);
+    //Log(this, logLine);
+
+    // --- Routing ---
+    CStringA body;
+    CStringA contentType;
+
+    if (path == "/data") {
+        body = getDataJSON(this);
+        contentType = "application/json";
+    }
+    else if (path == "/" || path.Left(2) == "/?") {
+        body = getMainPage();
+        contentType = "text/html; charset=utf-8";
+    }
+    else {
+        body = "Not Found";
+        contentType = "text/plain";
+    }
+
+    // --- Respuesta HTTP ---
+    CStringA header;
+    header.Format(
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Type: %s\r\n"
+        "Content-Length: %d\r\n"
+        "Connection: close\r\n"
+        "\r\n",
+        (LPCSTR)contentType, body.GetLength());
+
+    s_cliente.Send(header.GetBuffer(), header.GetLength());
+    s_cliente.Send(body.GetBuffer(), body.GetLength());
+    s_cliente.Close();
 }
