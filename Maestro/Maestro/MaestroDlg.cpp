@@ -508,11 +508,11 @@ void CMaestroDlg::OnClickedStart()
         Sleep(50);
         AfxBeginThread(Luces, this);
 
-        if (s_listen.Create(8080, SOCK_STREAM) && s_listen.Listen()) {
-            Log(this, "WebServer running on port 8080");
+        if (s_listen.Create(8082, SOCK_STREAM) && s_listen.Listen()) {
+            Log(this, "WebServer running on port 8082");
         }
         else {
-            Log(this, "WebServer: error al iniciar en 8080");
+            Log(this, "WebServer: error al iniciar en 8082");
             s_listen.Close();
         }
     }
